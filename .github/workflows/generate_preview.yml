@@ -1,38 +1,56 @@
-# Grant permission for this job to commit files back to the repository
-permissions:
-  contents: write
+name: Generate Repository Social Preview Card
 
-steps:
-  - name: Checkout repository code
-    # Uses an official GitHub action to download your repository content
-    uses: actions/checkout@v4
+# Define the events that trigger this workflow
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual triggering from the GitHub UI
 
-  - name: Setup Node.js
-    # Sets up the Node.js environment needed to run your JavaScript script
-    uses: actions/setup-node@v4
-    with:
-      node-version: '20'
+# The 'jobs' section is required to define the work to be done
+jobs:
+  generate_preview_card:
+    # Use the latest Ubuntu runner
+    runs-on: ubuntu-latest
+    
+    # Grant permission for this specific job to commit files back to the repository
+    permissions:
+      contents: write
 
-  # --- STEP A: AUTOMATIC IMAGE GENERATION SCRIPT EXECUTION ---
-  # This step executes the 'generate_preview_script.js' file in the root of your repo,
-  # which creates the 'preview.png' file.
-  - name: Generate Preview Image via Node.js Script
-    run: node generate_preview_script.js
+    steps:
+      - name: Checkout repository code
+        # Uses an official GitHub action to download your repository content
+        uses: actions/checkout@v4
 
-  # --- STEP B: Commit and Push the New File ---
-  # This action checks if 'preview.png' was created or modified and commits it.
-  - name: Check for changes and commit
-    id: commit
-    uses: stefanzweifel/git-auto-commit-action@v5
-    with:
-      commit_message: 'docs: Auto-generated social media preview card (preview.png)'
-      # Ensure only the specific file is committed
-      file_pattern: preview.png
+      - name: Setup Node.js
+        # Sets up the Node.js environment needed to run your JavaScript script
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      # --- Install 'canvas' library (from package.json) ---
+      - name: Install Node Dependencies
+        run: npm install
 
-  - name: Report Status
-    if: steps.commit.outputs.changes_detected == 'true'
-    run: echo "Successfully generated and committed preview.png."
+      # --- STEP A: AUTOMATIC IMAGE GENERATION SCRIPT EXECUTION ---
+      # This step executes the 'generate_preview_script.js' file in the root of your repo
+      - name: Generate Preview Image via Node.js Script
+        run: node generate_preview_script.js
 
-  - name: Report No Changes
-    if: steps.commit.outputs.changes_detected == 'false'
-    run: echo "No changes detected, skipping commit."
+      # --- STEP B: Commit and Push the New File ---
+      # This action checks if 'preview.png' was created or modified and commits it.
+      - name: Check for changes and commit
+        id: commit
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'docs: Auto-generated social media preview card (preview.png)'
+          # Ensure only the specific file is committed
+          file_pattern: preview.png
+
+      - name: Report Status
+        if: steps.commit.outputs.changes_detected == 'true'
+        run: echo "Successfully generated and committed preview.png."
+
+      - name: Report No Changes
+        if: steps.commit.outputs.changes_detected == 'false'
+        run: echo "No changes detected, skipping commit."
