@@ -1,3 +1,25 @@
+This file must be saved as: .github/workflows/generate_preview.yml
+
+name: Auto-Generate Preview Card
+
+on:
+
+Trigger the workflow on pushes to the 'main' branch
+
+push:
+branches:
+- main
+
+Allow manual runs from the GitHub Actions tab
+
+workflow_dispatch:
+
+jobs:
+generate_card:
+runs-on: ubuntu-latest
+permissions:
+contents: write # Necessary permission to commit the generated file back to the repository
+
 steps:
   - name: Checkout repository code
     uses: actions/checkout@v4
