@@ -58,7 +58,7 @@
         <!-- Repository Search Filter -->
         <div class="mb-6">
              <input type="text" id="searchRepoInput" placeholder="Filter repositories by name or description..."
-                    class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-github-blue shadow-sm transition duration-150 ease-in-out text-gray-700">
+                   class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-github-blue shadow-sm transition duration-150 ease-in-out text-gray-700">
         </div>
 
         <!-- Loading Indicator & Error Message -->
@@ -106,6 +106,10 @@
             // If the query is empty, show all repositories
             if (!query) {
                 renderRepoCards(currentRepos);
+                // Update status message to show all repos are displayed
+                if (currentRepos.length > 0) {
+                     displayStatus(`Displaying ${currentRepos.length} public repositories for ${HARDCODED_USERNAME}:`);
+                }
                 return;
             }
 
@@ -201,7 +205,7 @@
             displayStatus(`Loading profile and repositories for ${username}...`, 'text-blue-500');
 
             const userApiUrl = `https://api.github.com/users/${username}`;
-            // Sort by pushed (last updated) and request 100 results per page (max limit for unauthenticated users)
+            // Sort by pushed (last updated) and request 100 results per page (max limit)
             const reposApiUrl = `https://api.github.com/users/${username}/repos?type=public&sort=pushed&per_page=100`;
             
             try {
@@ -249,7 +253,8 @@
         // Function to create a single repository card element
         function createRepoCard(repo) {
             const card = document.createElement('div');
-            card.className = 'bg-card-bg p-5 rounded-xl shadow-md hover:shadow-lg transition duration-300 border border-gray-100 flex flex-col justify-between';
+            // Added overflow-hidden to clip the image corners
+            card.className = 'bg-card-bg rounded-xl shadow-md hover:shadow-lg transition duration-300 border border-gray-100 flex flex-col justify-between overflow-hidden';
             
             // Language badge styling helper
             const getLanguageBadge = (language) => {
@@ -285,31 +290,55 @@
             const username = repo.owner.login.toLowerCase();
             const targetUrl = `https://${username}.github.io/${repo.name}/`;
 
-            card.innerHTML = `
-                <a href="${targetUrl}" target="_blank" class="block">
-                    <h2 class="text-xl font-semibold text-github-blue hover:text-blue-700 mb-2 truncate" title="${repo.name}">
-                        ${repo.name}
-                    </h2>
+            // --- NEW: Thumbnail Image ---
+            const placeholderUrl = `https://placehold.co/600x300/f6f8fa/24292e?text=Preview+Unavailable`;
+            // Use open_graph_image_url if available, otherwise the owner's avatar as a fallback
+            const imageUrl = repo.open_graph_image_url || repo.owner.avatar_url; 
+
+            const imageHtml = `
+                <a href="${targetUrl}" target="_blank" class="block aspect-video bg-gray-100">
+                    <img src="${imageUrl}" 
+                         alt="Preview of ${repo.name}" 
+                         class="w-full h-full object-cover" 
+                         onerror="this.onerror=null; this.src='${placeholderUrl}';">
                 </a>
-                <p class="text-sm text-gray-700 mb-4 flex-grow">
-                    ${repo.description ? repo.description : 'No description provided.'}
-                </p>
-                <div class="flex items-center justify-between text-sm text-gray-500 mt-2">
-                    <div class="flex items-center space-x-3">
-                        ${getLanguageBadge(repo.language)}
-                        ${repo.stargazers_count > 0 ? 
-                            `<span class="flex items-center">
-                                ${starIcon}
-                                ${repo.stargazers_count}
-                            </span>` 
-                            : ''
-                        }
+            `;
+
+            // --- NEW: Card Content (wrapped in p-5) ---
+            const contentHtml = `
+                <div class="p-5 flex flex-col justify-between flex-grow">
+                    <!-- This div ensures title and description are grouped, and the stats are pushed to the bottom -->
+                    <div>
+                        <a href="${targetUrl}" target="_blank" class="block">
+                            <h2 class="text-xl font-semibold text-github-blue hover:text-blue-700 mb-2 truncate" title="${repo.name}">
+                                ${repo.name}
+                            </h2>
+                        </a>
+                        <p class="text-sm text-gray-700 mb-4 min-h-[40px]">
+                            ${repo.description ? repo.description : 'No description provided.'}
+                        </p>
                     </div>
-                    <span title="Last updated: ${new Date(repo.pushed_at).toLocaleDateString()}">
-                        Updated ${timeSince(new Date(repo.pushed_at))} ago
-                    </span>
+                    
+                    <!-- Stats section -->
+                    <div class="flex items-center justify-between text-sm text-gray-500 mt-2">
+                        <div class="flex items-center space-x-3 flex-wrap">
+                            ${getLanguageBadge(repo.language)}
+                            ${repo.stargazers_count > 0 ? 
+                                `<span class="flex items-center">
+                                    ${starIcon}
+                                    ${repo.stargazers_count}
+                                </span>` 
+                                : ''
+                            }
+                        </div>
+                        <span class="flex-shrink-0 ml-2" title="Last updated: ${new Date(repo.pushed_at).toLocaleDateString()}">
+                            Updated ${timeSince(new Date(repo.pushed_at))} ago
+                        </span>
+                    </div>
                 </div>
             `;
+
+            card.innerHTML = imageHtml + contentHtml;
             return card;
         }
 
@@ -319,21 +348,26 @@
             let interval = seconds / 31536000;
 
             if (interval > 1) {
-                return Math.floor(interval) + " years";
+                return Math.floor(interval) + (Math.floor(interval) === 1 ? " year" : " years");
             }
             interval = seconds / 2592000;
             if (interval > 1) {
-                return Math.floor(interval) + " months";
+                return Math.floor(interval) + (Math.floor(interval) === 1 ? " month" : " months");
             }
             interval = seconds / 86400;
             if (interval > 1) {
-                return Math.floor(interval) + " days";
+                return Math.floor(interval) + (Math.floor(interval) === 1 ? " day" : " days");
             }
             interval = seconds / 3600;
             if (interval > 1) {
-                return Math.floor(interval) + " hours";
+                return Math.floor(interval) + (Math.floor(interval) === 1 ? " hour" : " hours");
             }
-            return Math.floor(seconds / 60) + " minutes";
+            // Handle minutes and seconds for very recent pushes
+            interval = seconds / 60;
+            if (interval > 1) {
+                 return Math.floor(interval) + (Math.floor(interval) === 1 ? " minute" : " minutes");
+            }
+            return "just now";
         }
     </script>
 </body>
