@@ -9,7 +9,6 @@ steps:
 
   # ------------------------------------------------------------------
   # --- STEP A: AUTOMATIC IMAGE GENERATION SCRIPT EXECUTION ---
-  # ------------------------------------------------------------------
   # This step executes the 'generate_preview_script.js' file in the root of your repo,
   # which is responsible for creating a valid PNG file named 'preview.png'.
   - name: Generate Preview Image via Node.js Script
