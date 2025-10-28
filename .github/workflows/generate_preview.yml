@@ -1,51 +1,32 @@
-This file must be saved as: .github/workflows/generate_preview.yml
-
-name: Auto-Generate Preview Card
-
-on:
-
-Trigger the workflow on pushes to the 'main' branch
-
-push:
-branches:
-- main
-
-Allow manual runs from the GitHub Actions tab
-
-workflow_dispatch:
-
-jobs:
-generate_card:
-runs-on: ubuntu-latest
+# Grant permission for this job to commit files back to the repository
 permissions:
-contents: write # Necessary permission to commit the generated file back to the repository
+  contents: write
 
 steps:
   - name: Checkout repository code
+    # Uses an official GitHub action to download your repository content
     uses: actions/checkout@v4
 
   - name: Setup Node.js
+    # Sets up the Node.js environment needed to run your JavaScript script
     uses: actions/setup-node@v4
     with:
       node-version: '20'
 
-  # ------------------------------------------------------------------
   # --- STEP A: AUTOMATIC IMAGE GENERATION SCRIPT EXECUTION ---
   # This step executes the 'generate_preview_script.js' file in the root of your repo,
-  # which is responsible for creating a valid PNG file named 'preview.png'.
+  # which creates the 'preview.png' file.
   - name: Generate Preview Image via Node.js Script
     run: node generate_preview_script.js
 
-  # ------------------------------------------------------------------
-
   # --- STEP B: Commit and Push the New File ---
-  # This action checks if 'preview.png' was created or modified.
+  # This action checks if 'preview.png' was created or modified and commits it.
   - name: Check for changes and commit
     id: commit
     uses: stefanzweifel/git-auto-commit-action@v5
     with:
       commit_message: 'docs: Auto-generated social media preview card (preview.png)'
-      # Ensure only the specific file the Canvas is looking for is committed
+      # Ensure only the specific file is committed
       file_pattern: preview.png
 
   - name: Report Status
