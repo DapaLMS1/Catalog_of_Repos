@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hardcoded GitHub Repository Index</title>
+    <title>Hardcoded GitHub Repository Index with Search</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Configure Tailwind to use Inter font and simple colors -->
@@ -41,10 +41,10 @@
 <body class="bg-bg-light min-h-screen font-sans p-4 sm:p-8">
 
     <div class="max-w-4xl mx-auto">
-        <!-- Header and Input Section - Simplified -->
+        <!-- Header and Display Info -->
         <header class="text-center mb-8 p-6 bg-white shadow-lg rounded-xl border border-gray-100">
             <h1 class="text-3xl font-bold text-github-dark mb-2">Public Repositories Viewer</h1>
-            <p class="text-gray-600 mb-4">
+            <p class="text-gray-600">
                 Displaying public repositories for the hardcoded user: 
                 <span id="hardcodedUsernameDisplay" class="font-semibold text-github-blue"></span>
             </p>
@@ -53,6 +53,12 @@
         <!-- User Profile Display Section -->
         <div id="userProfile" class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 mb-8 hidden">
             <!-- Profile content will be injected here -->
+        </div>
+        
+        <!-- Repository Search Filter -->
+        <div class="mb-6">
+             <input type="text" id="searchRepoInput" placeholder="Filter repositories by name or description..."
+                    class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-github-blue shadow-sm transition duration-150 ease-in-out text-gray-700">
         </div>
 
         <!-- Loading Indicator & Error Message -->
@@ -73,15 +79,55 @@
         // HARDCODED USERNAME
         const HARDCODED_USERNAME = 'DAPAlms1';
 
+        // Global state to store all fetched repositories
+        let currentRepos = []; 
+
         const repoContainer = document.getElementById('repoContainer');
         const statusMessage = document.getElementById('statusMessage');
         const usernameDisplay = document.getElementById('hardcodedUsernameDisplay');
+        const searchRepoInput = document.getElementById('searchRepoInput');
 
-        // Initial load using the hardcoded value
+        // Initial setup and load
         window.onload = () => {
             usernameDisplay.textContent = HARDCODED_USERNAME;
             fetchAndDisplayRepos(HARDCODED_USERNAME);
+            setupSearchListener();
         };
+
+        // --- Core Filtering Logic ---
+        function setupSearchListener() {
+            // Filter repositories in real-time as the user types
+            searchRepoInput.addEventListener('input', handleSearch);
+        }
+
+        function handleSearch() {
+            const query = searchRepoInput.value.toLowerCase().trim();
+            
+            // If the query is empty, show all repositories
+            if (!query) {
+                renderRepoCards(currentRepos);
+                return;
+            }
+
+            // Filter the global list of repositories
+            const filteredRepos = currentRepos.filter(repo => {
+                const name = repo.name.toLowerCase();
+                const description = (repo.description || '').toLowerCase();
+                
+                // Check if the query is in the repo name OR the description
+                return name.includes(query) || description.includes(query);
+            });
+
+            renderRepoCards(filteredRepos);
+            
+            // Update status message based on search results
+            if (filteredRepos.length === 0) {
+                 displayStatus(`No repositories found matching "${query}".`, 'text-yellow-600');
+            } else {
+                 displayStatus(`Displaying ${filteredRepos.length} matching repositories:`);
+            }
+        }
+        // -----------------------------
         
         // Helper function to show status messages
         function displayStatus(message, className = 'text-gray-500') {
@@ -132,6 +178,21 @@
             profileElement.classList.remove('hidden');
         }
 
+        // Function to render the repository cards based on a provided array
+        function renderRepoCards(repos) {
+            repoContainer.innerHTML = ''; // Clear existing cards
+            
+            if (repos.length === 0) {
+                // If this is triggered by a search filter, the status message is handled by handleSearch
+                // If triggered initially and the user has no repos, the status is handled by fetchAndDisplayRepos
+                return; 
+            }
+
+            repos.forEach(repo => {
+                repoContainer.appendChild(createRepoCard(repo));
+            });
+        }
+
         // Main function to fetch data and update the UI
         async function fetchAndDisplayRepos(username) {
             username = username.toLowerCase();
@@ -162,6 +223,9 @@
                 const userData = await userResponse.json();
                 const repoData = await reposResponse.json();
                 
+                // Store the full list of repos in the global state
+                currentRepos = repoData; 
+                
                 // 1. Display Profile
                 displayProfile(userData);
                 
@@ -170,9 +234,7 @@
                     displayStatus(`User "${username}" has no public repositories.`, 'text-yellow-600');
                 } else {
                     displayStatus(`Displaying ${repoData.length} public repositories for ${username}:`);
-                    repoData.forEach(repo => {
-                        repoContainer.appendChild(createRepoCard(repo));
-                    });
+                    renderRepoCards(currentRepos); // Render all initial repos
                 }
 
             } catch (error) {
@@ -180,6 +242,7 @@
                 // Fallback display if an error occurred during fetching
                 displayStatus(`An error occurred while fetching data. Check console for details.`, 'text-red-500');
                 document.getElementById('userProfile').classList.add('hidden');
+                currentRepos = []; // Clear current repos on error
             }
         }
 
