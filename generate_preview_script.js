@@ -1,18 +1,24 @@
 const puppeteer = require('puppeteer');
-const simpleGit = require('simple-git'); // Still required, but primarily for future use (e.g., getting commit counts)
 const { promises: fs } = require('fs');
 const path = require('path');
 
 // --- Configuration ---
 const TARGET_ORG = 'DapaLMS1';
 const OUTPUT_DIR = path.join(__dirname, 'previews');
-const CLONE_DIR = path.join(__dirname, 'temp_clone'); // Still defined for robust cleanup, though not strictly used for cloning
+const CLONE_DIR = path.join(__dirname, 'temp_clone');
 const THUMBNAIL_WIDTH = 1200;
 const THUMBNAIL_HEIGHT = 630;
-
-// The current repository name (used for logging)
 const REPO_NAME = 'Catalog_of_Repos';
-// Note: GITHUB_TOKEN is passed securely via the GitHub Actions workflow environment.
+
+// CRITICAL FIX: Explicitly define a list of repositories to target. 
+// This bypasses the failing API call that attempts to fetch ALL organization repos,
+// and instead allows the script to fetch details for these specific repos, which is usually permitted.
+const TARGET_REPOS = [
+    // Add your actual repository names here (e.g., 'Calculator-App', 'Landing-Page-Project')
+    'Repo-Example-1', 
+    'Repo-Example-2' 
+];
+
 
 // --- UTILITY FUNCTIONS ---
 
@@ -34,18 +40,18 @@ async function removeDirectory(dirPath) {
 // --- DATA FETCHING ---
 
 /**
- * Fetches detailed repository data from the target organization using the GitHub API.
- * @returns {Promise<Array<Object>>} An array of repository data objects.
+ * Fetches detailed repository data for a list of known repositories.
+ * @param {string} repoName - The name of the repository.
+ * @param {string} token - The GitHub token.
+ * @returns {Promise<Object | null>} Detailed repository data or null on failure.
  */
-async function fetchRepositories(token) {
-    console.log(`Fetching detailed repository list from organization: ${TARGET_ORG}`);
-    
-    // Fetch both public and private repos (using token)
-    const url = `https://api.github.com/orgs/${TARGET_ORG}/repos?per_page=100&type=all`;
+async function fetchRepositoryDetails(repoName, token) {
+    // Note: Using the specific repo endpoint usually works even with restricted GITHUB_TOKEN.
+    const url = `https://api.github.com/repos/${TARGET_ORG}/${repoName}`;
     
     const headers = {
         'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
-        'Authorization': `token ${token}`, // Token MUST be present for this to work
+        'Authorization': `token ${token}`, 
         'Accept': 'application/vnd.github.v3+json'
     };
 
@@ -53,16 +59,21 @@ async function fetchRepositories(token) {
         const response = await fetch(url, { headers });
 
         if (!response.ok) {
-            throw new Error(`GitHub API HTTP error! Status: ${response.status} - ${await response.text()}`);
+            console.warn(`WARNING: Failed to fetch details for ${repoName}. Status: ${response.status}. Using placeholders.`);
+            return {
+                name: repoName,
+                description: 'Could not fetch description from GitHub API.',
+                language: 'Unknown',
+                stars: 0,
+                forks: 0,
+                updated_at: new Date().toLocaleDateString(),
+                html_url: `https://github.com/${TARGET_ORG}/${repoName}`
+            };
         }
 
-        const data = await response.json();
+        const repo = await response.json();
         
-        // Filter out the current repo (this catalog repo) if needed
-        const repositories = data.filter(repo => repo.name !== REPO_NAME);
-        
-        console.log(`Found ${repositories.length} target repositories.`);
-        return repositories.map(repo => ({
+        return {
             name: repo.name,
             description: repo.description || 'No description provided.',
             language: repo.language || 'N/A',
@@ -70,31 +81,31 @@ async function fetchRepositories(token) {
             forks: repo.forks_count,
             updated_at: new Date(repo.updated_at).toLocaleDateString(),
             html_url: repo.html_url
-        }));
+        };
 
     } catch (error) {
-        console.error('Error fetching repositories from GitHub API:', error.message);
-        return [];
+        console.error(`Error fetching details for ${repoName}:`, error.message);
+        return null;
     }
 }
 
-// --- HTML GENERATION ---
+
+// --- HTML GENERATION (Unchanged from previous version) ---
 
 /**
  * Generates the HTML string for the social preview card.
- * This is where you define the look and feel (HTML structure and Tailwind CSS classes).
  * @param {object} repoData - Data about the repository.
  * @returns {string} The complete HTML string.
  */
 function generateHtmlContent(repoData) {
-    // Basic color mapping based on language, you can expand this heavily!
     const languageColor = {
         'JavaScript': 'text-yellow-400',
         'TypeScript': 'text-blue-500',
         'Python': 'text-green-500',
         'HTML': 'text-red-500',
         'CSS': 'text-indigo-500',
-        'N/A': 'text-gray-400'
+        'N/A': 'text-gray-400',
+        'Unknown': 'text-gray-400'
     }[repoData.language] || 'text-gray-400';
 
     return `
@@ -107,7 +118,6 @@ function generateHtmlContent(repoData) {
     <!-- Load Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* This is the 1200x630 container */
         body {
             width: ${THUMBNAIL_WIDTH}px;
             height: ${THUMBNAIL_HEIGHT}px;
@@ -162,7 +172,7 @@ function generateHtmlContent(repoData) {
     `;
 }
 
-// --- SCREENSHOT PROCESSING ---
+// --- SCREENSHOT PROCESSING (Unchanged) ---
 
 /**
  * Takes a screenshot of the generated HTML content and saves it.
@@ -201,7 +211,6 @@ async function generatePreviewCard(repoData, browser) {
 
     } catch (error) {
         console.error(`FATAL ERROR generating card for ${name}:`, error.message);
-        // Do NOT rethrow the error here; let the loop continue processing other repos.
     }
 }
 
@@ -213,7 +222,6 @@ async function main() {
     const token = process.env.GITHUB_TOKEN;
 
     if (!token) {
-        // NOTE: This will prevent fetchRepositories from working correctly for all repos.
         console.error("CRITICAL ERROR: GITHUB_TOKEN environment variable not set. Aborting script.");
         process.exit(1);
     }
@@ -225,15 +233,24 @@ async function main() {
         await removeDirectory(OUTPUT_DIR);
         await fs.mkdir(OUTPUT_DIR, { recursive: true });
         
-        // 2. Fetch the dynamic list of repositories
-        const REPOSITORIES = await fetchRepositories(token);
-        if (REPOSITORIES.length === 0) {
-            console.log('No repositories found or API fetch failed. Exiting.');
+        // 2. Fetch details for the predefined list of repositories
+        const REPOSITORIES_DATA = [];
+        console.log(`\nStarting fetch for ${TARGET_REPOS.length} target repositories...`);
+
+        for (const repoName of TARGET_REPOS) {
+            const data = await fetchRepositoryDetails(repoName, token);
+            if (data) {
+                REPOSITORIES_DATA.push(data);
+            }
+        }
+
+        if (REPOSITORIES_DATA.length === 0) {
+            console.log('No repository details could be fetched. Exiting.');
             return;
         }
 
         // 3. Launch the Headless Browser
-        console.log('Launching headless browser...');
+        console.log('\nLaunching headless browser...');
         browser = await puppeteer.launch({ 
             headless: true, 
             args: [
@@ -245,7 +262,7 @@ async function main() {
         });
 
         // --- Processing Loop ---
-        for (const repoData of REPOSITORIES) {
+        for (const repoData of REPOSITORIES_DATA) {
             await generatePreviewCard(repoData, browser); 
         }
         
