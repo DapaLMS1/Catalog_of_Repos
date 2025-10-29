@@ -46,11 +46,10 @@ jobs:
       - name: Generate Preview Image via Node.js Script
         run: node generate_preview_script.js
         env:
-          # Passes the GITHUB_TOKEN to the Node.js script for API calls (fetching repos) and cloning
+          # Passes the GITHUB_TOKEN to the Node.js script for API calls (fetching repos)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
 
       # --- STEP B: Commit and Push the New File ---
-      # This action checks if the 'previews/' directory was created or modified and commits it.
       - name: Check for changes and commit
         id: commit
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -58,8 +57,7 @@ jobs:
           commit_message: 'docs: Auto-generated social media preview cards'
           # Commit all files inside the new 'previews/' directory
           file_pattern: previews/*
-          # The token is needed for the commit action to push changes
-          token: ${{ secrets.GITHUB_TOKEN }} 
+          # The 'token' input was removed here as it is no longer needed/accepted by V5.
 
       - name: Report Status
         if: steps.commit.outputs.changes_detected == 'true'
