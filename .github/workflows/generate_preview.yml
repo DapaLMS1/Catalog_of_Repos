@@ -1,6 +1,6 @@
 name: Generate Repository Social Preview Card
 
-Define the events that trigger this workflow
+# Define the events that trigger this workflow
 
 on:
 push:
