@@ -1,155 +1,182 @@
-/**
- * generate_preview_script.js
- * * This script uses Puppeteer and simple-git to iterate through a list of
- * * repositories, clone each one, take a screenshot of its index.html, and
- * * save the result.
- * * * IMPORTANT: This script requires the GITHUB_TOKEN environment variable
- * * to be set with 'repo' scope permissions for cloning.
- */
-
 const puppeteer = require('puppeteer');
+const simpleGit = require('simple-git');
+const { promises: fs } = require('fs');
 const path = require('path');
-const fs = require('fs');
-const { simpleGit } = require('simple-git');
-const util = require('util');
-// We use a utility to safely delete directories cross-platform
-const rimraf = util.promisify(require('rimraf')); 
+const rimraf = require('rimraf');
 
-// --- CONFIGURATION ---
-const TARGET_ORG = 'DapaLMS1'; 
-const REPOSITORIES = [
-    'repo-a-dashboard',
-    'repo-b-analytics',
-    'repo-c-reports'
-    // !!! CRITICAL: REPLACE THESE WITH THE ACTUAL NAMES OF YOUR REPOSITORIES IN DAPALMS !!!
-];
-const INPUT_HTML_FILE = 'index.html'; // The file to screenshot within each repository
-const OUTPUT_DIR = path.resolve(__dirname, 'previews'); // Directory to save all generated thumbnails
-const WIDTH = 1200; 
-const HEIGHT = 630; 
-// ----------------------
+// --- Configuration ---
+const TARGET_ORG = 'DapaLMS1';
+const OUTPUT_DIR = path.join(__dirname, 'previews');
+const CLONE_DIR = path.join(__dirname, 'temp_clone');
+const INPUT_HTML_FILE = 'index.html'; // Assumes the main page in each repo is index.html
+const THUMBNAIL_WIDTH = 1200;
+const THUMBNAIL_HEIGHT = 630;
+// Note: GITHUB_TOKEN is passed securely via the GitHub Actions workflow environment.
 
-async function generateThumbnail(repoName, browser) {
-    const TEMP_DIR = path.resolve(__dirname, 'temp-clone', repoName);
-    const OUTPUT_FILE = path.join(OUTPUT_DIR, `${repoName}.png`);
+/**
+ * Fetches all public repository names from the target organization using the GitHub API.
+ * @returns {Promise<string[]>} An array of repository names.
+ */
+async function fetchRepositories(token) {
+    console.log(`Fetching repository list from organization: ${TARGET_ORG}`);
     
-    // Check for GITHUB_TOKEN (required for cloning)
-    const githubToken = process.env.GITHUB_TOKEN;
-    if (!githubToken) {
-        console.error('❌ ERROR: GITHUB_TOKEN environment variable is not set. Cannot clone repositories.');
-        return;
+    const url = `https://api.github.com/orgs/${TARGET_ORG}/repos?type=public`;
+    
+    // GitHub API requires a User-Agent header
+    const headers = {
+        'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
+    };
+
+    // Use token if available for higher rate limits, even for public repos
+    if (token) {
+        headers['Authorization'] = `token ${token}`;
     }
 
     try {
-        console.log(`\n--- Processing Repository: ${repoName} ---`);
+        const response = await fetch(url, { headers });
 
-        // 1. Clone the repository
-        // We use the token in the URL for authentication
-        const repoUrl = `https://${githubToken}@github.com/${TARGET_ORG}/${repoName}.git`;
-        
-        console.log(`Cloning ${repoName} into ${TEMP_DIR}...`);
-        const git = simpleGit();
-        
-        // Ensure parent temp directory exists
-        if (!fs.existsSync(path.resolve(__dirname, 'temp-clone'))) {
-            fs.mkdirSync(path.resolve(__dirname, 'temp-clone'));
+        if (!response.ok) {
+            throw new Error(`GitHub API HTTP error! Status: ${response.status} - ${await response.text()}`);
         }
 
-        await git.clone(repoUrl, TEMP_DIR, ['--depth', '1']);
-        console.log(`✅ Clone complete.`);
-
-        // 2. Setup Puppeteer page
-        const page = await browser.newPage();
-        await page.setViewport({ width: WIDTH, height: HEIGHT });
-
-        // Add page debugging listeners (optional, but helpful)
-        page.on('console', msg => console.log(`[PAGE CONSOLE - ${repoName}]: ${msg.text()}`));
-        page.on('pageerror', error => console.error(`[PAGE ERROR - ${repoName}]: ${error.message}`));
-
-        // 3. Navigate to the local HTML file inside the cloned repo
-        const htmlFilePath = path.join(TEMP_DIR, INPUT_HTML_FILE);
-        if (!fs.existsSync(htmlFilePath)) {
-            console.warn(`⚠️ WARNING: File ${INPUT_HTML_FILE} not found in ${repoName}. Skipping.`);
-            await page.close();
-            return;
-        }
-
-        const fileUrl = `file://${htmlFilePath}`;
-        console.log(`Navigating to: ${fileUrl}`);
+        const data = await response.json();
         
-        await page.goto(fileUrl, { 
-            waitUntil: 'domcontentloaded', 
-            timeout: 30000 
-        });
-
-        // 4. Debugging: Check the page title
-        const pageTitle = await page.title();
-        console.log(`✅ Page navigated. Title: "${pageTitle}"`);
-        
-        // 5. Take the screenshot
-        console.log(`Taking screenshot and saving to ${OUTPUT_FILE}...`);
-        await page.screenshot({
-            path: OUTPUT_FILE,
-            clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
-            type: 'png'
-        });
-
-        console.log(`✅ Successfully generated thumbnail: ${OUTPUT_FILE}`);
-        
-        await page.close();
+        const repoNames = data.map(repo => repo.name);
+        console.log(`Found ${repoNames.length} repositories.`);
+        return repoNames;
 
     } catch (error) {
-        console.error(`❌ Failed to process ${repoName}. Error details: ${error.message}`);
-    } finally {
-        // 6. Cleanup the cloned repository
-        console.log(`Cleaning up temporary directory ${TEMP_DIR}...`);
-        // Use try/catch for cleanup to ensure the script doesn't fail here unnecessarily
-        try {
-            await rimraf(TEMP_DIR);
-            console.log(`Cleanup complete.`);
-        } catch(e) {
-            console.error(`Failed to clean up ${TEMP_DIR}: ${e.message}`);
-        }
+        console.error('Error fetching repositories from GitHub API:', error.message);
+        // If API fails, return empty list to prevent script crash.
+        return [];
     }
 }
 
-async function runGenerator() {
-    let browser;
+
+/**
+ * Clones a repository, takes a screenshot of its index.html, and saves it.
+ * @param {string} repoName - The name of the repository to process.
+ * @param {puppeteer.Browser} browser - The active Puppeteer browser instance.
+ */
+async function processRepository(repoName, browser) {
+    const repoUrl = `https://github.com/${TARGET_ORG}/${repoName}.git`;
+    const clonePath = path.join(CLONE_DIR, repoName);
+    const git = simpleGit();
+    
+    console.log(`\n--- Processing ${repoName} ---`);
+
     try {
-        // Ensure the output directory exists
-        if (!fs.existsSync(OUTPUT_DIR)) {
-            fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-            console.log(`Created output directory: ${OUTPUT_DIR}`);
-        }
+        // 1. Clone the repository
+        console.log(`Cloning ${repoName}...`);
         
-        console.log('Launching headless Chromium browser (once for all repos)...');
-        browser = await puppeteer.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            timeout: 20000 
+        // Use the token in the URL for authentication if needed (for private repos or rate limit bypass)
+        const authenticatedRepoUrl = process.env.GITHUB_TOKEN 
+            ? `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${TARGET_ORG}/${repoName}.git`
+            : repoUrl;
+
+        await git.clone(authenticatedRepoUrl, clonePath, ['--depth', '1']);
+        
+        // 2. Locate the HTML file
+        const htmlFilePath = path.join(clonePath, INPUT_HTML_FILE);
+        
+        try {
+            await fs.access(htmlFilePath);
+        } catch (e) {
+            console.error(`ERROR: ${INPUT_HTML_FILE} not found in cloned repo ${repoName}. Skipping.`);
+            return;
+        }
+
+        // 3. Take Screenshot
+        const page = await browser.newPage();
+        await page.setViewport({ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT });
+        
+        // Navigate to the local file path
+        console.log(`Navigating to file://${htmlFilePath}...`);
+        await page.goto(`file://${htmlFilePath}`, { 
+            waitUntil: 'domcontentloaded', // Wait for the basic DOM structure
+            timeout: 30000 // 30 seconds timeout
         });
 
-        // Process all repositories sequentially
-        for (const repo of REPOSITORIES) {
-            await generateThumbnail(repo, browser);
-        }
+        // Debugging check: Log page title
+        const pageTitle = await page.title();
+        console.log(`[PAGE DEBUG] Page Title: ${pageTitle}`);
+
+        // Set the output path
+        const outputPath = path.join(OUTPUT_DIR, `${repoName}.png`);
+
+        console.log(`Taking screenshot and saving to ${outputPath}...`);
+        await page.screenshot({ 
+            path: outputPath, 
+            fullPage: false // Only capture the viewport size
+        });
         
-        console.log('\n--- All repository previews generated successfully! ---');
+        await page.close();
+        console.log(`SUCCESS: Thumbnail saved for ${repoName}.`);
 
     } catch (error) {
-        console.error(`\n❌ CRITICAL FAILURE in runGenerator: ${error.message}`);
+        console.error(`FATAL ERROR processing ${repoName}:`, error.message);
+    } finally {
+        // 4. Cleanup (Done by the main function for efficiency)
+    }
+}
+
+/**
+ * Main execution function.
+ */
+async function main() {
+    let browser;
+    const token = process.env.GITHUB_TOKEN;
+
+    if (!token) {
+        console.warn("WARNING: GITHUB_TOKEN environment variable not set. This may lead to API rate limits or failure to clone private repos.");
+    }
+    
+    try {
+        // --- Setup ---
+        // 1. Clean up old temporary clone directory and output directory
+        console.log('Cleaning up temporary directories...');
+        await rimraf(CLONE_DIR);
+        await rimraf(OUTPUT_DIR);
+        await fs.mkdir(OUTPUT_DIR, { recursive: true });
+        
+        // 2. Fetch the dynamic list of repositories
+        const REPOSITORIES = await fetchRepositories(token);
+        if (REPOSITORIES.length === 0) {
+            console.log('No repositories found or API fetch failed. Exiting.');
+            return;
+        }
+
+        // 3. Launch the Headless Browser
+        console.log('Launching headless browser...');
+        // Use 'new' to ensure latest Puppeteer API is used
+        browser = await puppeteer.launch({ 
+            headless: true, 
+            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+        });
+
+        // --- Processing Loop ---
+        for (const repoName of REPOSITORIES) {
+            await processRepository(repoName, browser);
+        }
+        
+    } catch (error) {
+        console.error('An unexpected error occurred during main execution:', error);
         process.exit(1);
     } finally {
+        // --- Teardown ---
         if (browser) {
             await browser.close();
             console.log('Browser closed.');
         }
-        // Final cleanup of the main temp folder
-        try {
-            await rimraf(path.resolve(__dirname, 'temp-clone'));
-        } catch (e) {
-            console.warn(`Could not fully clean up temp-clone directory.`);
+        
+        // Clean up the temporary directory
+        if (fs.existsSync(CLONE_DIR)) {
+            console.log('Final cleanup of clone directory...');
+            await rimraf(CLONE_DIR);
         }
+        
+        console.log('\n--- Script finished successfully ---');
     }
 }
 
-runGenerator();
+main();
