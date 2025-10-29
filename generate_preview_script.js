@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const simpleGit = require('simple-git');
 const { promises: fs } = require('fs');
 const path = require('path');
-const rimraf = require('rimraf');
+// const rimraf = require('rimraf'); // Removed external dependency
 
 // --- Configuration ---
 const TARGET_ORG = 'DapaLMS1';
@@ -12,6 +12,24 @@ const INPUT_HTML_FILE = 'index.html'; // Assumes the main page in each repo is i
 const THUMBNAIL_WIDTH = 1200;
 const THUMBNAIL_HEIGHT = 630;
 // Note: GITHUB_TOKEN is passed securely via the GitHub Actions workflow environment.
+
+/**
+ * Utility function to handle directory removal safely using native fs/promises.
+ * @param {string} dirPath - The path to the directory to remove.
+ */
+async function removeDirectory(dirPath) {
+    try {
+        await fs.rm(dirPath, { recursive: true, force: true });
+        console.log(`Successfully removed directory: ${dirPath}`);
+    } catch (e) {
+        // Log an error only if it's not simply "directory not found" (which force: true handles)
+        // This is mainly here for debugging unexpected permissions errors.
+        if (e.code !== 'ENOENT') {
+            console.error(`Error removing directory ${dirPath}:`, e.message);
+        }
+    }
+}
+
 
 /**
  * Fetches all public repository names from the target organization using the GitHub API.
@@ -33,6 +51,7 @@ async function fetchRepositories(token) {
     }
 
     try {
+        // NOTE: This global 'fetch' requires Node.js v18+ in the CI runner.
         const response = await fetch(url, { headers });
 
         if (!response.ok) {
@@ -46,6 +65,7 @@ async function fetchRepositories(token) {
         return repoNames;
 
     } catch (error) {
+        // Catching the fetch error here prevents the main function from exiting with code 1 due to API issues
         console.error('Error fetching repositories from GitHub API:', error.message);
         // If API fails, return empty list to prevent script crash.
         return [];
@@ -61,7 +81,8 @@ async function fetchRepositories(token) {
 async function processRepository(repoName, browser) {
     const repoUrl = `https://github.com/${TARGET_ORG}/${repoName}.git`;
     const clonePath = path.join(CLONE_DIR, repoName);
-    const git = simpleGit();
+    // simpleGit instance is created here, as it's stateful per execution context
+    const git = simpleGit(); 
     
     console.log(`\n--- Processing ${repoName} ---`);
 
@@ -69,7 +90,7 @@ async function processRepository(repoName, browser) {
         // 1. Clone the repository
         console.log(`Cloning ${repoName}...`);
         
-        // Use the token in the URL for authentication if needed (for private repos or rate limit bypass)
+        // Use the token in the URL for authentication if needed
         const authenticatedRepoUrl = process.env.GITHUB_TOKEN 
             ? `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${TARGET_ORG}/${repoName}.git`
             : repoUrl;
@@ -80,6 +101,7 @@ async function processRepository(repoName, browser) {
         const htmlFilePath = path.join(clonePath, INPUT_HTML_FILE);
         
         try {
+            // Check for file existence synchronously for speed, but catch error if access fails
             await fs.access(htmlFilePath);
         } catch (e) {
             console.error(`ERROR: ${INPUT_HTML_FILE} not found in cloned repo ${repoName}. Skipping.`);
@@ -92,8 +114,10 @@ async function processRepository(repoName, browser) {
         
         // Navigate to the local file path
         console.log(`Navigating to file://${htmlFilePath}...`);
+        
+        // Use the 'file://' protocol to load the local HTML file
         await page.goto(`file://${htmlFilePath}`, { 
-            waitUntil: 'domcontentloaded', // Wait for the basic DOM structure
+            waitUntil: 'networkidle0', // Changed to networkidle0 for greater stability (waits for network activity to cease)
             timeout: 30000 // 30 seconds timeout
         });
 
@@ -115,8 +139,10 @@ async function processRepository(repoName, browser) {
 
     } catch (error) {
         console.error(`FATAL ERROR processing ${repoName}:`, error.message);
+        // Do NOT rethrow the error here; let the loop continue processing other repos.
     } finally {
-        // 4. Cleanup (Done by the main function for efficiency)
+        // Remove the clone directory immediately after processing each repo
+        await removeDirectory(clonePath);
     }
 }
 
@@ -133,10 +159,10 @@ async function main() {
     
     try {
         // --- Setup ---
-        // 1. Clean up old temporary clone directory and output directory
         console.log('Cleaning up temporary directories...');
-        await rimraf(CLONE_DIR);
-        await rimraf(OUTPUT_DIR);
+        // Use the new, robust native function to clean up
+        await removeDirectory(CLONE_DIR);
+        await removeDirectory(OUTPUT_DIR);
         await fs.mkdir(OUTPUT_DIR, { recursive: true });
         
         // 2. Fetch the dynamic list of repositories
@@ -148,20 +174,28 @@ async function main() {
 
         // 3. Launch the Headless Browser
         console.log('Launching headless browser...');
-        // Use 'new' to ensure latest Puppeteer API is used
+        // Ensure necessary flags are present for CI/Docker environments
         browser = await puppeteer.launch({ 
             headless: true, 
-            args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage', // Recommended for memory-constrained environments
+                '--disable-gpu' // Recommended for CI
+            ] 
         });
 
         // --- Processing Loop ---
         for (const repoName of REPOSITORIES) {
-            await processRepository(repoName, browser);
+            // Processing function now handles its own cleanup for stability
+            await processRepository(repoName, browser); 
         }
         
     } catch (error) {
-        console.error('An unexpected error occurred during main execution:', error);
-        process.exit(1);
+        // This catch block will only execute if setup (like Puppeteer launch) failed.
+        console.error('A critical error occurred during main execution. This usually means Puppeteer could not launch or setup failed:', error.message);
+        console.error('Stack:', error.stack);
+        process.exit(1); // Explicitly exit with 1 for critical failures
     } finally {
         // --- Teardown ---
         if (browser) {
@@ -169,13 +203,11 @@ async function main() {
             console.log('Browser closed.');
         }
         
-        // Clean up the temporary directory
-        if (fs.existsSync(CLONE_DIR)) {
-            console.log('Final cleanup of clone directory...');
-            await rimraf(CLONE_DIR);
-        }
+        // Final attempt to clean up the main clone directory path
+        console.log('Final cleanup of main clone directory...');
+        await removeDirectory(CLONE_DIR);
         
-        console.log('\n--- Script finished successfully ---');
+        console.log('\n--- Script finished ---');
     }
 }
 
