@@ -21,8 +21,8 @@ jobs:
     permissions:
       # Required to commit the generated files
       contents: write
-      # REQUIRED FIX: Add read permission for Organization data (to fetch dynamic repo list)
-      organization: read 
+      # The 'organization: read' permission caused a YAML error and is removed.
+      # We rely on the GITHUB_TOKEN default scope for reading public organization data.
 
     steps:
       - name: Checkout repository code
