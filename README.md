@@ -1,57 +1,55 @@
-Catalog of Repository Social Preview Cards
+🖼️ Repository Catalog (DapaLMS1 Organization)
 
-This repository uses a custom GitHub Action workflow to automatically generate a catalog of social media preview cards for multiple repositories within the organization.
+This repository serves as the central catalog for all deployed web applications within the DapaLMS1 organization. Its primary function is to automatically generate and store high-quality, up-to-date visual previews (thumbnails) for every single application hosted via GitHub Pages.
 
-When someone shares a link to another repository in your organization (e.g., on platforms like Twitter, Slack, or Discord), the corresponding image from this repository will be used as the social card instead of the default, generic GitHub card.
+This ensures a dynamic and visual showcase of all active projects, making it easier to see what each repository contains without having to visit the live site.
 
-🚀 How It Works
+✨ Features
 
-The entire process runs automatically inside the GitHub Actions CI/CD environment. The workflow is triggered on every push to the main branch, or manually via workflow_dispatch.
+The preview generation is managed entirely by a GitHub Actions workflow that runs automatically on every push to the main branch.
 
-The core mechanism is defined in the .github/workflows/generate_preview.yml file and powered by a Node.js script that uses a headless browser.
+Dynamic Discovery: Uses the GitHub API to dynamically fetch the names of all public repositories within the DapaLMS1 organization (excluding this catalog itself).
 
-Workflow Steps (Defined in generate_preview.yml):
+Live Application Screenshotting: The Node.js script uses Puppeteer to launch a headless browser. It navigates to the live deployed GitHub Pages URL for each repository (e.g., https://dapalms1.github.io/RepoName/).
 
-Environment Setup: Installs Node.js v20 and the necessary Chromium system dependencies required to run the headless browser (Puppeteer).
+High-Fidelity Thumbnails: Captures a high-resolution screenshot (1200x800px) of the live application after allowing a 3-second delay for all client-side JavaScript (React, Angular, etc.) to fully render.
 
-Dependency Install: Runs npm ci to install project dependencies (puppeteer, simple-git) based on the locked versions in package-lock.json.
+Automatic Commit: The generated thumbnails are automatically committed back to this repository, ensuring the previews/ directory is always current.
 
-Image Generation: Executes the generate_preview_script.js Node.js file.
+📂 Generated Preview Files
 
-This script uses simple-git and the GitHub API to fetch and analyze data from all target repositories.
+All generated thumbnail images are stored in the previews/ directory using the naming convention [RepoName].png.
 
-It uses Puppeteer to launch a headless browser, render a custom HTML/CSS template containing each repository's data, and take a high-resolution screenshot for each.
+These images can be easily referenced in other documents, such as a main organizational landing page or another repository's README, to provide a visual link.
 
-Commit: The stefanzweifel/git-auto-commit-action checks for the newly created image files (typically in a previews/ directory). If changes are detected, it automatically commits and pushes the images back to the repository under the name github-actions[bot].
+Example Usage (Embedding Previews)
 
-📂 Required Files
+You can embed the live previews directly into Markdown using the following structure:
 
-This automation requires three core configuration and code files in the repository root:
+Repository Name
 
-File
+Live Preview
 
-Purpose
+Acts-and-Regulators
 
-.github/workflows/generate_preview.yml
 
-The GitHub Action definition. This file sets the triggers, permissions, and the sequence of steps for the automation.
 
-package.json
+User-Management-App
 
-Lists the Node.js dependencies (puppeteer, simple-git) needed for the script.
 
-package-lock.json
 
-Locks the exact version of every dependency to ensure the CI environment is always reproducible and stable.
+Financial-Tracker
 
-generate_preview_script.js
 
-The main logic file. This script iterates through your organization's repositories, analyzes their data, and generates a preview image for each one using Puppeteer.
 
-🛠️ Usage and Maintenance
+(Note: Replace the example repository names with the actual names of your projects.)
 
-Triggering: The workflow runs automatically on every push to main or can be run manually via the Actions tab on GitHub (using the "Run workflow" button).
+🛠️ Workflow Details
 
-Preventing Loops: The workflow includes a critical check (if: github.actor != 'github-actions[bot]') to ensure it does not re-trigger itself when it commits the newly generated image.
+The automation is handled by the Generate Repository Social Preview Card workflow defined in .github/workflows/generate_social_card.yml.
 
-Customization: To change the appearance or content of the social card, modify the HTML/CSS template within the generate_preview_script.js file.
+Trigger: Runs on every push to main and on manual workflow_dispatch.
+
+Script: generate_preview_script.js
+
+Output Directory: previews/
