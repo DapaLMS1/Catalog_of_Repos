@@ -1,0 +1,16 @@
+# dependencies
+/node_modules
+/package-lock.json.orig
+/npm-debug.log*
+
+# testing
+/coverage
+
+# production
+/build
+/dist
+/tmp
+
+# environment
+.env
+.DS_Store
