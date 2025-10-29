@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const simpleGit = require('simple-git');
 const { promises: fs } = require('fs');
 const path = require('path');
-// This script requires Node.js v18+ for native fetch support 
+// This script requires Node.js v18+ for native fetch support
 
 // --- Configuration ---
 const TARGET_ORG = 'DapaLMS1';
@@ -49,9 +49,8 @@ async function fetchRepositoryNames() {
     let hasNextPage = true;
     
     while (hasNextPage) {
-        // CHANGED: Using /user/repos endpoint which requires fewer explicit permissions 
-        // and relies on what the token user can already see.
-        const url = `https://api.github.com/user/repos?affiliation=organization_member&per_page=100&page=${page}`;
+        // UPDATED: Removed affiliation=organization_member filter for broader results
+        const url = `https://api.github.com/user/repos?per_page=100&page=${page}`;
         
         const headers = {
             'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
