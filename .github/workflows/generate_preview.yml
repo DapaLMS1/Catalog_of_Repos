@@ -1,64 +1,74 @@
 name: Generate Repository Social Preview Card
 
 # Define the events that trigger this workflow
+
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch: # Allows manual triggering from the GitHub UI
+   push:
+      branches:
+        - main workflow_dispatch: # Allows manual triggering from the GitHub UI
 
 # The 'jobs' section is required to define the work to be done
+
 jobs:
-  generate_preview_card:
-    # CRITICAL: Only run this workflow if the push was NOT made by the 'github-actions[bot]' user.
-    # This prevents an infinite loop when the action commits the new files.
-    if: github.actor != 'github-actions[bot]'
+   generate_preview_card:
 
-    # Use the latest Ubuntu runner
-    runs-on: ubuntu-latest
-    
-    # Grant permission for this specific job to commit files back to the repository
-    permissions:
-      contents: write
+# CRITICAL: Only run this workflow if the push was NOT made by the 'github-actions[bot]' user.
+# This prevents an infinite loop when the action commits the new files.
 
-    steps:
-      - name: Checkout repository code
-        # Uses an official GitHub action to download your repository content
-        uses: actions/checkout@v4
+ if: github.actor != 'github-actions[bot]'
 
-      - name: Setup Node.js
-        # Sets up the Node.js environment needed to run your JavaScript script
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          
-      # --- Install dependencies (puppeteer, simple-git, rimraf) ---
-      - name: Install Node Dependencies
-        run: npm install
+# Use the latest Ubuntu runner
+runs-on: ubuntu-latest
 
-      # --- STEP A: AUTOMATIC IMAGE GENERATION SCRIPT EXECUTION ---
-      - name: Generate Preview Image via Node.js Script
-        run: node generate_preview_script.js
-        env:
-          # Passes the GITHUB_TOKEN to the Node.js script for API calls (fetching repos) and cloning
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+# Grant permission for this specific job to commit files back to the repository
+permissions:
+  contents: write
 
-      # --- STEP B: Commit and Push the New File ---
-      # This action checks if the 'previews/' directory was created or modified and commits it.
-      - name: Check for changes and commit
-        id: commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: 'docs: Auto-generated social media preview cards'
-          # Commit all files inside the new 'previews/' directory
-          file_pattern: previews/*
-          # The token is needed for the commit action to push changes
-          token: ${{ secrets.GITHUB_TOKEN }} 
+steps:
+  - name: Checkout repository code
+    # Uses an official GitHub action to download your repository content
+    uses: actions/checkout@v4
 
-      - name: Report Status
-        if: steps.commit.outputs.changes_detected == 'true'
-        run: echo "Successfully generated and committed preview files in previews/ directory."
+  - name: Setup Node.js
+    # Sets up the Node.js environment needed to run your JavaScript script
+    uses: actions/setup-node@v4
+    with:
+      node-version: '20'
+      
+  # --- CRITICAL: Install System Dependencies for Puppeteer/Chromium ---
+  - name: Install Chromium Dependencies
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libxkbcommon-x11-0 libgbm-dev
+      
+  # --- Install dependencies (puppeteer, simple-git) ---
+  - name: Install Node Dependencies
+    # NOTE: Ensure you have a package.json file listing 'puppeteer' and 'simple-git'
+    run: npm install
 
-      - name: Report No Changes
-        if: steps.commit.outputs.changes_detected == 'false'
-        run: echo "No changes detected, skipping commit."
+  # --- STEP A: AUTOMATIC IMAGE GENERATION SCRIPT EXECUTION ---
+  - name: Generate Preview Image via Node.js Script
+    run: node generate_preview_script.js
+    env:
+      # Passes the GITHUB_TOKEN to the Node.js script for API calls (fetching repos) and cloning
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+
+  # --- STEP B: Commit and Push the New File ---
+  # This action checks if the 'previews/' directory was created or modified and commits it.
+  - name: Check for changes and commit
+    id: commit
+    uses: stefanzweifel/git-auto-commit-action@v5
+    with:
+      commit_message: 'docs: Auto-generated social media preview cards'
+      # Commit all files inside the new 'previews/' directory
+      file_pattern: previews/*
+      # The token is needed for the commit action to push changes
+      token: ${{ secrets.GITHUB_TOKEN }} 
+
+  - name: Report Status
+    if: steps.commit.outputs.changes_detected == 'true'
+    run: echo "Successfully generated and committed preview files in previews/ directory."
+
+  - name: Report No Changes
+    if: steps.commit.outputs.changes_detected == 'false'
+    run: echo "No changes detected, skipping commit."
