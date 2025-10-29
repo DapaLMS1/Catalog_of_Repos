@@ -8,17 +8,8 @@ const OUTPUT_DIR = path.join(__dirname, 'previews');
 const CLONE_DIR = path.join(__dirname, 'temp_clone');
 const THUMBNAIL_WIDTH = 1200;
 const THUMBNAIL_HEIGHT = 630;
-const REPO_NAME = 'Catalog_of_Repos';
-
-// CRITICAL FIX: Explicitly define a list of repositories to target. 
-// This bypasses the failing API call that attempts to fetch ALL organization repos,
-// and instead allows the script to fetch details for these specific repos, which is usually permitted.
-const TARGET_REPOS = [
-    // Add your actual repository names here (e.g., 'Calculator-App', 'Landing-Page-Project')
-    'Repo-Example-1', 
-    'Repo-Example-2' 
-];
-
+// Exclude the name of this repository itself so we don't try to generate a card for it.
+const REPO_NAME_TO_EXCLUDE = 'Catalog_of_Repos';
 
 // --- UTILITY FUNCTIONS ---
 
@@ -40,7 +31,66 @@ async function removeDirectory(dirPath) {
 // --- DATA FETCHING ---
 
 /**
- * Fetches detailed repository data for a list of known repositories.
+ * Fetches all public repository names from the target organization using the GitHub API.
+ * This function handles pagination and requires the GITHUB_TOKEN for organization access.
+ * @param {string} token - The GitHub token.
+ * @returns {Promise<string[]>} An array of repository names.
+ */
+async function fetchRepositoryNames(token) {
+    console.log(`\nAttempting to fetch dynamic repository list from organization: ${TARGET_ORG}`);
+    
+    let allRepoNames = [];
+    let page = 1;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+        // Use the paginated endpoint to get all repos
+        const url = `https://api.github.com/orgs/${TARGET_ORG}/repos?type=public&per_page=100&page=${page}`;
+        
+        const headers = {
+            'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
+            // CRITICAL: Passing the token here is necessary for org access
+            'Authorization': `token ${token}`, 
+            'Accept': 'application/vnd.github.v3+json'
+        };
+
+        try {
+            const response = await fetch(url, { headers });
+
+            if (response.status === 404) {
+                console.error(`ERROR: Organization '${TARGET_ORG}' not found or token lacks 'read:org' scope. Status 404.`);
+                return [];
+            }
+            if (!response.ok) {
+                throw new Error(`GitHub API HTTP error! Status: ${response.status} - ${await response.text()}`);
+            }
+
+            const data = await response.json();
+            // Exclude the current catalog repo from the list
+            const repoNames = data.map(repo => repo.name).filter(name => name !== REPO_NAME_TO_EXCLUDE); 
+            allRepoNames = allRepoNames.concat(repoNames);
+
+            // Check if there are more pages to fetch
+            const linkHeader = response.headers.get('Link');
+            if (data.length < 100 || !linkHeader || !linkHeader.includes('rel="next"')) {
+                hasNextPage = false;
+            } else {
+                page++;
+            }
+
+        } catch (error) {
+            console.error('Error fetching dynamic repository list from GitHub API:', error.message);
+            return [];
+        }
+    }
+    
+    console.log(`Found ${allRepoNames.length} repositories dynamically.`);
+    return allRepoNames;
+}
+
+
+/**
+ * Fetches detailed repository data for a specific repository.
  * @param {string} repoName - The name of the repository.
  * @param {string} token - The GitHub token.
  * @returns {Promise<Object | null>} Detailed repository data or null on failure.
@@ -90,7 +140,7 @@ async function fetchRepositoryDetails(repoName, token) {
 }
 
 
-// --- HTML GENERATION (Unchanged from previous version) ---
+// --- HTML GENERATION (Unchanged) ---
 
 /**
  * Generates the HTML string for the social preview card.
@@ -233,11 +283,20 @@ async function main() {
         await removeDirectory(OUTPUT_DIR);
         await fs.mkdir(OUTPUT_DIR, { recursive: true });
         
-        // 2. Fetch details for the predefined list of repositories
-        const REPOSITORIES_DATA = [];
-        console.log(`\nStarting fetch for ${TARGET_REPOS.length} target repositories...`);
+        // 1. Fetch the dynamic list of repository names
+        const REPOSITORIES_NAMES = await fetchRepositoryNames(token); 
+        
+        if (REPOSITORIES_NAMES.length === 0) {
+            console.log('No repository names found. Exiting.');
+            // Do not exit with error, as it might be a permissions issue
+            return;
+        }
 
-        for (const repoName of TARGET_REPOS) {
+        // 2. Fetch detailed data for each discovered repository
+        const REPOSITORIES_DATA = [];
+        console.log(`\nStarting fetch for ${REPOSITORIES_NAMES.length} discovered repositories...`);
+
+        for (const repoName of REPOSITORIES_NAMES) {
             const data = await fetchRepositoryDetails(repoName, token);
             if (data) {
                 REPOSITORIES_DATA.push(data);
