@@ -8,7 +8,7 @@ branches:
 - main
 workflow_dispatch: # Allows manual triggering from the GitHub UI
 
-The 'jobs' section is required to define the work to be done
+# The 'jobs' section is required to define the work to be done
 
 jobs:
 generate_preview_card:
