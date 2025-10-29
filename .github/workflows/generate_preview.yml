@@ -17,9 +17,12 @@ jobs:
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
     
-    # Grant permission for this specific job to commit files back to the repository
+    # CRITICAL FIX: Grant permissions for this specific job
     permissions:
+      # Required to commit the generated files
       contents: write
+      # REQUIRED FIX: Add read permission for Organization data (to fetch dynamic repo list)
+      organization: read 
 
     steps:
       - name: Checkout repository code
