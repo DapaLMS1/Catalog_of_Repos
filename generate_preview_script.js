@@ -30,12 +30,12 @@ async function removeDirectory(dirPath) {
 }
 
 /**
- * Fetches all public repository names from the target organization using the GitHub API.
- * Uses the ORG_PAT_TOKEN for necessary 'read:org' scope.
- * @returns {Promise<string[]>} An array of repository names.
+ * Fetches all public repository names accessible by the token user, then filters for the target organization.
+ * Uses the ORG_PAT_TOKEN.
+ * @returns {Promise<string[]>} An array of repository names belonging to TARGET_ORG.
  */
 async function fetchRepositoryNames() {
-    console.log(`Fetching repository list from organization: ${TARGET_ORG}`);
+    console.log(`Fetching all accessible repositories for the token user...`);
     
     // Get token from the environment variable (now ORG_PAT_TOKEN)
     const token = process.env.ORG_PAT_TOKEN;
@@ -49,11 +49,13 @@ async function fetchRepositoryNames() {
     let hasNextPage = true;
     
     while (hasNextPage) {
-        const url = `https://api.github.com/orgs/${TARGET_ORG}/repos?type=public&per_page=100&page=${page}`;
+        // CHANGED: Using /user/repos endpoint which requires fewer explicit permissions 
+        // and relies on what the token user can already see.
+        const url = `https://api.github.com/user/repos?affiliation=organization_member&per_page=100&page=${page}`;
         
         const headers = {
             'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
-            // Use the powerful ORG_PAT_TOKEN for organization list access
+            // Use the powerful ORG_PAT_TOKEN
             'Authorization': `token ${token}`,
         };
 
@@ -61,7 +63,7 @@ async function fetchRepositoryNames() {
             const response = await fetch(url, { headers });
 
             if (!response.ok) {
-                // If API fails with 404, we log the specific error that led to the PAT requirement.
+                // If API fails, log the specific error
                 throw new Error(`GitHub API HTTP error! Status: ${response.status} - ${response.statusText}`);
             }
 
@@ -71,8 +73,11 @@ async function fetchRepositoryNames() {
             const linkHeader = response.headers.get('link');
             hasNextPage = linkHeader && linkHeader.includes('rel="next"');
 
-            // Collect repository names, excluding the current catalog repo
+            // Collect repository names, ensuring they belong to the TARGET_ORG and excluding the current catalog repo
             const names = data
+                // CRITICAL FILTER: Ensure the repo belongs to the correct organization
+                .filter(repo => repo.owner.login === TARGET_ORG)
+                // Filter out the current catalog repository
                 .filter(repo => repo.name !== 'Catalog_of_Repos')
                 .map(repo => repo.name);
 
@@ -80,13 +85,13 @@ async function fetchRepositoryNames() {
             page++;
 
         } catch (error) {
-            console.error(`ERROR: Organization '${TARGET_ORG}' not found or token lacks 'read:org' scope. Status ${error.message}.`);
+            console.error(`ERROR fetching repository list: ${error.message}.`);
             // Stop processing on error
             hasNextPage = false; 
         }
     }
     
-    console.log(`Found ${allRepoNames.length} repositories to process.`);
+    console.log(`Found ${allRepoNames.length} repositories in ${TARGET_ORG} accessible by the token.`);
     return allRepoNames;
 }
 
