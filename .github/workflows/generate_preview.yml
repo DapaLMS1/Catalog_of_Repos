@@ -21,8 +21,7 @@ jobs:
     permissions:
       # Required to commit the generated files
       contents: write
-      # The 'organization: read' permission caused a YAML error and is removed.
-      # We rely on the GITHUB_TOKEN default scope for reading public organization data.
+      # We rely on the ORG_PAT_TOKEN for reading organization data.
 
     steps:
       - name: Checkout repository code
@@ -49,8 +48,8 @@ jobs:
       - name: Generate Preview Image via Node.js Script
         run: node generate_preview_script.js
         env:
-          # Passes the GITHUB_TOKEN to the Node.js script for API calls (fetching repos)
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          # --- FIX: Pass the new, powerful ORG_PAT_TOKEN to the script ---
+          ORG_PAT_TOKEN: ${{ secrets.ORG_PAT_TOKEN }} 
 
       # --- STEP B: Commit and Push the New File ---
       - name: Check for changes and commit
@@ -60,7 +59,6 @@ jobs:
           commit_message: 'docs: Auto-generated social media preview cards'
           # Commit all files inside the new 'previews/' directory
           file_pattern: previews/*
-          # The 'token' input was removed here as it is no longer needed/accepted by V5.
 
       - name: Report Status
         if: steps.commit.outputs.changes_detected == 'true'
