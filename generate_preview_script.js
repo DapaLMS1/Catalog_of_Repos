@@ -1,6 +1,8 @@
 const puppeteer = require('puppeteer');
+const simpleGit = require('simple-git');
 const { promises: fs } = require('fs');
 const path = require('path');
+// This script requires Node.js v18+ for native fetch support
 
 // --- Configuration ---
 const TARGET_ORG = 'DapaLMS1';
@@ -8,10 +10,7 @@ const OUTPUT_DIR = path.join(__dirname, 'previews');
 const CLONE_DIR = path.join(__dirname, 'temp_clone');
 const THUMBNAIL_WIDTH = 1200;
 const THUMBNAIL_HEIGHT = 630;
-// Exclude the name of this repository itself so we don't try to generate a card for it.
-const REPO_NAME_TO_EXCLUDE = 'Catalog_of_Repos';
-
-// --- UTILITY FUNCTIONS ---
+// Note: ORG_PAT_TOKEN is passed securely via the GitHub Actions workflow environment.
 
 /**
  * Utility function to handle directory removal safely using native fs/promises.
@@ -19,144 +18,115 @@ const REPO_NAME_TO_EXCLUDE = 'Catalog_of_Repos';
  */
 async function removeDirectory(dirPath) {
     try {
+        // Use recursive: true and force: true for robust cleanup in CI environment
         await fs.rm(dirPath, { recursive: true, force: true });
         console.log(`Successfully removed directory: ${dirPath}`);
     } catch (e) {
+        // Log an error only if it's not simply "directory not found"
         if (e.code !== 'ENOENT') {
             console.error(`Error removing directory ${dirPath}:`, e.message);
         }
     }
 }
 
-// --- DATA FETCHING ---
-
 /**
  * Fetches all public repository names from the target organization using the GitHub API.
- * This function handles pagination and requires the GITHUB_TOKEN for organization access.
- * @param {string} token - The GitHub token.
+ * Uses the ORG_PAT_TOKEN for necessary 'read:org' scope.
  * @returns {Promise<string[]>} An array of repository names.
  */
-async function fetchRepositoryNames(token) {
-    console.log(`\nAttempting to fetch dynamic repository list from organization: ${TARGET_ORG}`);
+async function fetchRepositoryNames() {
+    console.log(`Fetching repository list from organization: ${TARGET_ORG}`);
     
-    let allRepoNames = [];
+    // Get token from the environment variable (now ORG_PAT_TOKEN)
+    const token = process.env.ORG_PAT_TOKEN;
+    if (!token) {
+        console.error("FATAL: ORG_PAT_TOKEN environment variable not set. Cannot fetch dynamic repository list.");
+        return [];
+    }
+
+    const allRepoNames = [];
     let page = 1;
     let hasNextPage = true;
-
+    
     while (hasNextPage) {
-        // Use the paginated endpoint to get all repos
         const url = `https://api.github.com/orgs/${TARGET_ORG}/repos?type=public&per_page=100&page=${page}`;
         
         const headers = {
             'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
-            // CRITICAL: Passing the token here is necessary for org access
-            'Authorization': `token ${token}`, 
-            'Accept': 'application/vnd.github.v3+json'
+            // Use the powerful ORG_PAT_TOKEN for organization list access
+            'Authorization': `token ${token}`,
         };
 
         try {
             const response = await fetch(url, { headers });
 
-            if (response.status === 404) {
-                console.error(`ERROR: Organization '${TARGET_ORG}' not found or token lacks 'read:org' scope. Status 404.`);
-                return [];
-            }
             if (!response.ok) {
-                throw new Error(`GitHub API HTTP error! Status: ${response.status} - ${await response.text()}`);
+                // If API fails with 404, we log the specific error that led to the PAT requirement.
+                throw new Error(`GitHub API HTTP error! Status: ${response.status} - ${response.statusText}`);
             }
 
             const data = await response.json();
-            // Exclude the current catalog repo from the list
-            const repoNames = data.map(repo => repo.name).filter(name => name !== REPO_NAME_TO_EXCLUDE); 
-            allRepoNames = allRepoNames.concat(repoNames);
+            
+            // Check for pagination link in the headers
+            const linkHeader = response.headers.get('link');
+            hasNextPage = linkHeader && linkHeader.includes('rel="next"');
 
-            // Check if there are more pages to fetch
-            const linkHeader = response.headers.get('Link');
-            if (data.length < 100 || !linkHeader || !linkHeader.includes('rel="next"')) {
-                hasNextPage = false;
-            } else {
-                page++;
-            }
+            // Collect repository names, excluding the current catalog repo
+            const names = data
+                .filter(repo => repo.name !== 'Catalog_of_Repos')
+                .map(repo => repo.name);
+
+            allRepoNames.push(...names);
+            page++;
 
         } catch (error) {
-            console.error('Error fetching dynamic repository list from GitHub API:', error.message);
-            return [];
+            console.error(`ERROR: Organization '${TARGET_ORG}' not found or token lacks 'read:org' scope. Status ${error.message}.`);
+            // Stop processing on error
+            hasNextPage = false; 
         }
     }
     
-    console.log(`Found ${allRepoNames.length} repositories dynamically.`);
+    console.log(`Found ${allRepoNames.length} repositories to process.`);
     return allRepoNames;
 }
 
-
 /**
- * Fetches detailed repository data for a specific repository.
+ * Fetches detailed metadata for a single repository.
  * @param {string} repoName - The name of the repository.
- * @param {string} token - The GitHub token.
- * @returns {Promise<Object | null>} Detailed repository data or null on failure.
+ * @returns {Promise<object>} Repository metadata object.
  */
-async function fetchRepositoryDetails(repoName, token) {
-    // Note: Using the specific repo endpoint usually works even with restricted GITHUB_TOKEN.
+async function fetchRepoDetails(repoName) {
     const url = `https://api.github.com/repos/${TARGET_ORG}/${repoName}`;
-    
+    const token = process.env.ORG_PAT_TOKEN; 
+
     const headers = {
         'User-Agent': 'GitHub-Actions-Repo-Preview-Generator',
-        'Authorization': `token ${token}`, 
-        'Accept': 'application/vnd.github.v3+json'
+        'Authorization': `token ${token}`,
     };
 
     try {
         const response = await fetch(url, { headers });
-
         if (!response.ok) {
-            console.warn(`WARNING: Failed to fetch details for ${repoName}. Status: ${response.status}. Using placeholders.`);
-            return {
-                name: repoName,
-                description: 'Could not fetch description from GitHub API.',
-                language: 'Unknown',
-                stars: 0,
-                forks: 0,
-                updated_at: new Date().toLocaleDateString(),
-                html_url: `https://github.com/${TARGET_ORG}/${repoName}`
-            };
+            throw new Error(`Failed to fetch details for ${repoName}. Status: ${response.status}`);
         }
-
-        const repo = await response.json();
-        
-        return {
-            name: repo.name,
-            description: repo.description || 'No description provided.',
-            language: repo.language || 'N/A',
-            stars: repo.stargazers_count,
-            forks: repo.forks_count,
-            updated_at: new Date(repo.updated_at).toLocaleDateString(),
-            html_url: repo.html_url
-        };
-
+        return await response.json();
     } catch (error) {
         console.error(`Error fetching details for ${repoName}:`, error.message);
         return null;
     }
 }
 
-
-// --- HTML GENERATION (Unchanged) ---
-
 /**
- * Generates the HTML string for the social preview card.
- * @param {object} repoData - Data about the repository.
- * @returns {string} The complete HTML string.
+ * Generates the HTML content for a single repository card.
+ * @param {object} details - Repository metadata from the GitHub API.
+ * @returns {string} The complete, styled HTML string.
  */
-function generateHtmlContent(repoData) {
-    const languageColor = {
-        'JavaScript': 'text-yellow-400',
-        'TypeScript': 'text-blue-500',
-        'Python': 'text-green-500',
-        'HTML': 'text-red-500',
-        'CSS': 'text-indigo-500',
-        'N/A': 'text-gray-400',
-        'Unknown': 'text-gray-400'
-    }[repoData.language] || 'text-gray-400';
+function generateHtmlContent(details) {
+    // Basic fallback data if API details failed
+    const repoName = details.name || "Unknown Repository";
+    const description = details.description || "A project hosted on GitHub.";
+    const language = details.language || "Mixed";
+    const stars = details.stargazers_count || 0;
 
     return `
 <!DOCTYPE html>
@@ -164,103 +134,97 @@ function generateHtmlContent(repoData) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${repoData.name} Preview</title>
-    <!-- Load Tailwind CSS via CDN -->
+    <title>${repoName} Social Card</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
         body {
-            width: ${THUMBNAIL_WIDTH}px;
-            height: ${THUMBNAIL_HEIGHT}px;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
             font-family: 'Inter', sans-serif;
-            background: #0d1117; /* GitHub Dark Mode background */
+            margin: 0;
+            width: 1200px;
+            height: 630px;
+            overflow: hidden;
         }
     </style>
 </head>
-<body class="flex items-center justify-center p-12">
-    <div class="w-full h-full p-8 border-4 border-blue-600 rounded-xl flex flex-col justify-between shadow-2xl bg-gray-900">
-        
-        <!-- Header -->
-        <div class="flex items-center justify-between">
-            <h1 class="text-6xl font-extrabold text-white">${repoData.name}</h1>
-            <div class="text-xl text-gray-500 font-mono">
-                ${TARGET_ORG}
-            </div>
+<body class="bg-gray-900 flex items-center justify-center p-12">
+    <div class="w-full h-full bg-gray-800 rounded-2xl shadow-2xl flex flex-col justify-between p-16 border-4 border-indigo-500">
+        <!-- Header/Title -->
+        <div>
+            <h1 class="text-6xl font-extrabold text-indigo-400 leading-tight">
+                ${repoName.replace(/-/g, ' ')}
+            </h1>
+            <p class="text-2xl text-gray-300 mt-4 h-20 overflow-hidden">
+                ${description}
+            </p>
         </div>
 
-        <!-- Description -->
-        <p class="text-3xl text-gray-300 my-4 line-clamp-2">
-            ${repoData.description}
-        </p>
-
-        <!-- Footer / Metadata -->
-        <div class="flex justify-between items-end border-t border-gray-700 pt-4">
-            <!-- Language -->
-            <div class="flex flex-col">
-                <span class="text-sm font-semibold text-gray-400">LANGUAGE</span>
-                <span class="text-2xl font-bold ${languageColor}">${repoData.language}</span>
+        <!-- Footer/Metadata -->
+        <div class="flex justify-between items-end text-xl text-gray-400 pt-8 border-t border-gray-700">
+            <!-- Left: Language & Organization -->
+            <div class="flex items-center space-x-6">
+                <span class="font-semibold text-lg text-white bg-indigo-600 px-4 py-1 rounded-full shadow-lg">
+                    ${language}
+                </span>
+                <span class="text-gray-500">
+                    \u25CF ${TARGET_ORG}
+                </span>
             </div>
             
-            <!-- Stats -->
-            <div class="flex space-x-8 text-right">
-                <div class="flex flex-col items-center">
-                    <span class="text-sm font-semibold text-gray-400">STARS</span>
-                    <span class="text-3xl font-bold text-yellow-300">${repoData.stars}</span>
-                </div>
-                <div class="flex flex-col items-center">
-                    <span class="text-sm font-semibold text-gray-400">FORKS</span>
-                    <span class="text-3xl font-bold text-gray-300">${repoData.forks}</span>
-                </div>
+            <!-- Right: Stars -->
+            <div class="flex items-center text-yellow-400 font-bold text-3xl">
+                <!-- Star Icon (Inline SVG) -->
+                <svg class="w-8 h-8 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M9.049 2.927c.3-.921 1.638-.921 1.94 0l1.247 3.823a1 1 0 00.95.69h4.037c.969 0 1.371 1.24.588 1.81l-3.266 2.373a1 1 0 00-.364 1.118l1.247 3.823c.3.921-.755 1.688-1.54 1.118l-3.266-2.373a1 1 0 00-1.176 0l-3.266 2.373c-.785.57-1.84-.197-1.54-1.118l1.247-3.823a1 1 0 00-.364-1.118L2.27 9.25c-.783-.57-.381-1.81.588-1.81h4.037a1 1 0 00.95-.69l1.247-3.823z"></path>
+                </svg>
+                ${stars.toLocaleString()}
             </div>
         </div>
-        
     </div>
 </body>
 </html>
     `;
 }
 
-// --- SCREENSHOT PROCESSING (Unchanged) ---
-
 /**
- * Takes a screenshot of the generated HTML content and saves it.
- * @param {object} repoData - Data about the repository.
+ * Takes a screenshot of the dynamically generated HTML and saves it.
+ * @param {string} repoName - The name of the repository.
+ * @param {object} details - Repository metadata.
  * @param {puppeteer.Browser} browser - The active Puppeteer browser instance.
  */
-async function generatePreviewCard(repoData, browser) {
-    const { name } = repoData;
-    
-    console.log(`\n--- Generating Card for ${name} ---`);
-    
+async function processRepository(repoName, details, browser) {
+    console.log(`\n--- Processing ${repoName} ---`);
+
     try {
         const page = await browser.newPage();
         await page.setViewport({ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT });
         
-        // 1. Generate the custom HTML content
-        const htmlContent = generateHtmlContent(repoData);
+        // 1. Generate HTML content based on fetched details
+        const htmlContent = generateHtmlContent(details);
         
-        // 2. Set the page content (render the custom card)
+        // 2. Load the HTML directly into the page (no file cloning needed)
+        console.log(`Loading dynamic HTML content for ${repoName}...`);
         await page.setContent(htmlContent, {
-             waitUntil: 'networkidle0', 
-             timeout: 30000 
+            waitUntil: 'networkidle0', // Wait for external resources (Tailwind/Font) to load
+            timeout: 30000 
         });
 
         // 3. Take Screenshot
-        const outputPath = path.join(OUTPUT_DIR, `${name}.png`);
+        const outputPath = path.join(OUTPUT_DIR, `${repoName}.png`);
 
         console.log(`Taking screenshot and saving to ${outputPath}...`);
         await page.screenshot({ 
             path: outputPath, 
-            fullPage: false 
+            fullPage: false // Only capture the fixed 1200x630 viewport size
         });
         
         await page.close();
-        console.log(`SUCCESS: Thumbnail saved for ${name}.`);
+        console.log(`SUCCESS: Thumbnail saved for ${repoName}.`);
 
     } catch (error) {
-        console.error(`FATAL ERROR generating card for ${name}:`, error.message);
+        console.error(`FATAL ERROR processing ${repoName}:`, error.message);
+        // Do NOT rethrow the error here; let the loop continue processing other repos.
     }
 }
 
@@ -269,76 +233,64 @@ async function generatePreviewCard(repoData, browser) {
  */
 async function main() {
     let browser;
-    const token = process.env.GITHUB_TOKEN;
+    // CRITICAL: Now using the ORG_PAT_TOKEN
+    const token = process.env.ORG_PAT_TOKEN;
 
     if (!token) {
-        console.error("CRITICAL ERROR: GITHUB_TOKEN environment variable not set. Aborting script.");
-        process.exit(1);
+        console.warn("WARNING: ORG_PAT_TOKEN environment variable not set. Cannot fetch dynamic list or metadata.");
+        // We must exit if the token needed for the API is missing
+        process.exit(1); 
     }
     
     try {
         // --- Setup ---
         console.log('Cleaning up temporary directories...');
-        await removeDirectory(CLONE_DIR); // Clean up temp_clone path just in case
+        // Clean up output directory (previews)
         await removeDirectory(OUTPUT_DIR);
         await fs.mkdir(OUTPUT_DIR, { recursive: true });
         
-        // 1. Fetch the dynamic list of repository names
-        const REPOSITORIES_NAMES = await fetchRepositoryNames(token); 
-        
-        if (REPOSITORIES_NAMES.length === 0) {
-            console.log('No repository names found. Exiting.');
-            // Do not exit with error, as it might be a permissions issue
-            return;
-        }
-
-        // 2. Fetch detailed data for each discovered repository
-        const REPOSITORIES_DATA = [];
-        console.log(`\nStarting fetch for ${REPOSITORIES_NAMES.length} discovered repositories...`);
-
-        for (const repoName of REPOSITORIES_NAMES) {
-            const data = await fetchRepositoryDetails(repoName, token);
-            if (data) {
-                REPOSITORIES_DATA.push(data);
-            }
-        }
-
-        if (REPOSITORIES_DATA.length === 0) {
-            console.log('No repository details could be fetched. Exiting.');
+        // 2. Fetch the dynamic list of repositories (Now using PAT)
+        const REPO_NAMES = await fetchRepositoryNames();
+        if (REPO_NAMES.length === 0) {
+            console.log('No repositories found or API fetch failed. Exiting.');
             return;
         }
 
         // 3. Launch the Headless Browser
-        console.log('\nLaunching headless browser...');
+        console.log('Launching headless browser...');
         browser = await puppeteer.launch({ 
             headless: true, 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage', 
-                '--disable-gpu' 
+                '--disable-gpu'
             ] 
         });
 
         // --- Processing Loop ---
-        for (const repoData of REPOSITORIES_DATA) {
-            await generatePreviewCard(repoData, browser); 
+        for (const repoName of REPO_NAMES) {
+            // Fetch detailed metadata for the card content
+            const details = await fetchRepoDetails(repoName);
+            
+            if (details) {
+                await processRepository(repoName, details, browser); 
+            } else {
+                console.log(`Skipping ${repoName} due to failed details fetch.`);
+            }
         }
         
     } catch (error) {
         console.error('A critical error occurred during main execution. This usually means Puppeteer could not launch or setup failed:', error.message);
         console.error('Stack:', error.stack);
-        process.exit(1); 
+        process.exit(1);
     } finally {
         // --- Teardown ---
         if (browser) {
             await browser.close();
             console.log('Browser closed.');
         }
-        
-        // Final cleanup
-        await removeDirectory(CLONE_DIR); 
-        
+        // No need to remove CLONE_DIR since we removed cloning.
         console.log('\n--- Script finished ---');
     }
 }
