@@ -32,7 +32,7 @@ jobs:
         with:
           node-version: '20'
           
-      # --- Install 'canvas' library (from package.json) ---
+      # --- Install dependencies (puppeteer, simple-git, rimraf) ---
       - name: Install Node Dependencies
         run: npm install
 
@@ -40,20 +40,23 @@ jobs:
       # This step executes the 'generate_preview_script.js' file in the root of your repo
       - name: Generate Preview Image via Node.js Script
         run: node generate_preview_script.js
+        # The script creates multiple image files inside the new 'previews/' directory.
 
       # --- STEP B: Commit and Push the New File ---
-      # This action checks if 'preview.png' was created or modified and commits it.
+      # This action checks if the 'previews/' directory was created or modified and commits it.
       - name: Check for changes and commit
         id: commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: 'docs: Auto-generated social media preview card (preview.png)'
-          # Ensure only the specific file is committed
-          file_pattern: preview.png
+          commit_message: 'docs: Auto-generated social media preview cards'
+          # CRITICAL FIX: Commit all files inside the new 'previews/' directory
+          file_pattern: previews/*
+          # CRITICAL FIX: The token is needed for cloning other repos and for the commit action itself
+          token: ${{ secrets.GITHUB_TOKEN }} 
 
       - name: Report Status
         if: steps.commit.outputs.changes_detected == 'true'
-        run: echo "Successfully generated and committed preview.png."
+        run: echo "Successfully generated and committed preview files in previews/ directory."
 
       - name: Report No Changes
         if: steps.commit.outputs.changes_detected == 'false'
