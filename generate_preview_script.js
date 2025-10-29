@@ -16,7 +16,7 @@ const util = require('util');
 const rimraf = util.promisify(require('rimraf')); 
 
 // --- CONFIGURATION ---
-const TARGET_ORG = 'DapaLMS'; 
+const TARGET_ORG = 'DapaLMS1'; 
 const REPOSITORIES = [
     'repo-a-dashboard',
     'repo-b-analytics',
