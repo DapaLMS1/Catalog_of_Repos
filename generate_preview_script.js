@@ -6,8 +6,9 @@ const path = require('path');
 // --- Configuration ---
 // Note: We use the organization name here, which is DapaLMS1.
 const TARGET_ORG = 'DapaLMS1';
-// UPDATED: Changed the base URL to point to the main GitHub repository page.
-const GITHUB_REPO_BASE_URL = `https://github.com/${TARGET_ORG}/`; 
+// FIXED: Changed the base URL to point to the live deployed GitHub Pages URL.
+// GitHub Pages URLs are case-insensitive, but typically lowercased (dapalms1.github.io).
+const GITHUB_PAGES_BASE_URL = `https://${TARGET_ORG.toLowerCase()}.github.io/`; 
 
 const OUTPUT_DIR = path.join(__dirname, 'previews');
 const THUMBNAIL_WIDTH = 1200;
@@ -106,8 +107,9 @@ async function processRepository(repoName, browser) {
         // 1. Set the viewport size for the screenshot (matching the size we want to capture)
         await page.setViewport({ width: THUMBNAIL_WIDTH, height: THUMBNAIL_HEIGHT });
         
-        // 2. Construct the live GitHub Repository URL
-        const liveUrl = `${GITHUB_REPO_BASE_URL}${repoName}/`;
+        // 2. Construct the live GitHub Pages URL
+        // Now using https://dapalms1.github.io/repoName/
+        const liveUrl = `${GITHUB_PAGES_BASE_URL}${repoName}/`;
 
         console.log(`Navigating to live URL: ${liveUrl}`);
         
@@ -118,7 +120,7 @@ async function processRepository(repoName, browser) {
         });
 
         if (!response || !response.ok()) {
-             // Handle 404s or other non-successful HTTP statuses (e.g., if the repository is private or deleted)
+             // Handle 404s or other non-successful HTTP statuses (e.g., if the Pages site isn't deployed)
              console.warn(`WARNING: Failed to load ${liveUrl}. Status: ${response ? response.status() : 'No response'}. Skipping screenshot.`);
              await page.close();
              return;
@@ -126,8 +128,8 @@ async function processRepository(repoName, browser) {
 
         // 4. Wait for any remaining client-side JavaScript to render the page content
         console.log(`Waiting ${SCREENSHOT_DELAY_MS}ms for client-side rendering...`);
-        // This wait is crucial when scraping complex pages like GitHub that load dynamically.
-        await page.waitForTimeout(SCREENSHOT_DELAY_MS); 
+        // Use native Node.js Promise wrapper for reliable delay
+        await new Promise(resolve => setTimeout(resolve, SCREENSHOT_DELAY_MS)); 
 
         // 5. Take Screenshot
         const outputPath = path.join(OUTPUT_DIR, `${repoName}.png`);
@@ -145,7 +147,7 @@ async function processRepository(repoName, browser) {
         });
         
         await page.close();
-        console.log(`SUCCESS: Live repository thumbnail saved for ${repoName}.`);
+        console.log(`SUCCESS: Live application thumbnail saved for ${repoName}.`);
 
     } catch (error) {
         console.error(`FATAL ERROR processing ${repoName}:`, error.message);
