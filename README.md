@@ -1,8 +1,8 @@
-Repository Social Preview Card Generator
+Catalog of Repository Social Preview Cards
 
-This repository uses a custom GitHub Action workflow to automatically generate unique, informative social media preview cards for the repository.
+This repository uses a custom GitHub Action workflow to automatically generate a catalog of social media preview cards for multiple repositories within the organization.
 
-When someone shares a link to this repository on platforms like Twitter, Slack, or Discord, a custom image showing key repository details will be displayed instead of the default, generic GitHub card.
+When someone shares a link to another repository in your organization (e.g., on platforms like Twitter, Slack, or Discord), the corresponding image from this repository will be used as the social card instead of the default, generic GitHub card.
 
 🚀 How It Works
 
@@ -18,11 +18,11 @@ Dependency Install: Runs npm ci to install project dependencies (puppeteer, simp
 
 Image Generation: Executes the generate_preview_script.js Node.js file.
 
-This script uses simple-git to analyze the repository data.
+This script uses simple-git and the GitHub API to fetch and analyze data from all target repositories.
 
-It uses Puppeteer to launch a headless browser, render a custom HTML/CSS template containing the repository data, and take a high-resolution screenshot.
+It uses Puppeteer to launch a headless browser, render a custom HTML/CSS template containing each repository's data, and take a high-resolution screenshot for each.
 
-Commit: The stefanzweifel/git-auto-commit-action checks for the newly created image file (typically in a previews/ directory). If changes are detected, it automatically commits and pushes the image back to the repository under the name github-actions[bot].
+Commit: The stefanzweifel/git-auto-commit-action checks for the newly created image files (typically in a previews/ directory). If changes are detected, it automatically commits and pushes the images back to the repository under the name github-actions[bot].
 
 📂 Required Files
 
@@ -46,7 +46,7 @@ Locks the exact version of every dependency to ensure the CI environment is alwa
 
 generate_preview_script.js
 
-The main logic file. This JavaScript script is responsible for analyzing the repo data and generating the image using Puppeteer.
+The main logic file. This script iterates through your organization's repositories, analyzes their data, and generates a preview image for each one using Puppeteer.
 
 🛠️ Usage and Maintenance
 
