@@ -32,25 +32,32 @@ async function generateThumbnail() {
         browser = await puppeteer.launch({
             args: ['--no-sandbox', '--disable-setuid-sandbox'],
             // Optional: Increase timeout for slower runner startup
-            timeout: 10000 
+            timeout: 15000 // Increased timeout for launching the browser
         });
 
         const page = await browser.newPage();
         await page.setViewport({ width: WIDTH, height: HEIGHT });
 
+        // --- New Debugging: Capture Console Errors from the page ---
+        page.on('console', msg => console.log(`[PAGE CONSOLE]: ${msg.text()}`));
+        page.on('pageerror', error => console.error(`[PAGE ERROR]: ${error.message}`));
+        // -------------------------------------------------------------
+
         // 2. Navigate to the local HTML file using the file:// protocol
         const fileUrl = `file://${htmlFilePath}`;
         console.log(`Navigating to local file URL: ${fileUrl}`);
         
-        // Wait until the network activity settles and the DOM is fully loaded
+        // Wait until the initial DOM content is loaded. This is less strict than 'networkidle0'.
         await page.goto(fileUrl, { 
-            waitUntil: 'networkidle0',
-            timeout: 30000 // 30 second timeout for page load
+            // CHANGED: Use 'domcontentloaded' for stability in CI environments
+            waitUntil: 'domcontentloaded', 
+            timeout: 30000 
         });
 
-        // 3. Optional: Wait a small extra amount for any late-loading JS/Animations to complete
-        await page.waitForTimeout(500); 
-
+        // 3. Debugging: Check the page title to confirm successful navigation
+        const pageTitle = await page.title();
+        console.log(`✅ Page successfully navigated. Title: "${pageTitle}"`);
+        
         // 4. Take the screenshot
         console.log(`Taking screenshot and saving to ${OUTPUT_FILE}...`);
         await page.screenshot({
@@ -62,7 +69,9 @@ async function generateThumbnail() {
         console.log(`✅ Successfully generated thumbnail: ${OUTPUT_FILE}`);
 
     } catch (error) {
-        console.error("❌ Failed to generate preview image using Puppeteer. Check if your HTML has any external resources that failed to load:", error.message);
+        console.error(`❌ Failed to generate preview image in main try/catch block.`);
+        console.error(`Error details: ${error.message}`);
+        console.error(`This may be due to a browser crash or a navigation timeout. Review the full GitHub Actions log for messages starting with [PAGE CONSOLE] or [PAGE ERROR].`);
         process.exit(1);
     } finally {
         if (browser) {
