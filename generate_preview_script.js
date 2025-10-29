@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer');
 const simpleGit = require('simple-git');
 const { promises: fs } = require('fs');
 const path = require('path');
-// This script requires Node.js v18+ for native fetch support
+// This script requires Node.js v18+ for native fetch support 
 
 // --- Configuration ---
 const TARGET_ORG = 'DapaLMS1';
